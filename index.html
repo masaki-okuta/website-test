@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+
+<html>
+   <head>
+      <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <title>チーム北原研</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="vsc-initialized"><header>
+    <h1>ステムプレイヤーの制作</h1>
+</header>
+    <div class="element">
+        <h7>企画書</h7>
+        <div class="proposal">
+         <p><a href="proposal.pdf" class="btn" target="_blank">新規タブで開く</a></p>
+         <embed src="proposal.pdf" type="application/pdf" width="100%" height="100%">
+        </div>  
+         
+    </div>
+    <div class="element">
+        <h7>プログラム</h7>
+        <div class="code">
+         <p><a href="https://github.com/masaki-okuta/test" class="btn" target="_blank">プログラムをダウンロード</a></p>
+         <pre><code>
+            
+            import os
+            from pathlib import Path
+            from typing import Generator, List
+            import librosa
+            from librosa import display
+            import streamlit as st
+            from spleeter.separator import Codec
+            import matplotlib.pyplot as plt
+
+            from utils import (ProcessingMode, SpleeterMode, SpleeterSettings,
+                              download_youtube_as_mp3, get_audio_separated_zip,
+                              get_multi_audio_separated_zip, get_split_audio,
+                              get_title_from_youtube_url)
+
+            # global variables
+            UPLOAD_DIR = Path("./upload_files/")
+            OUTPUT_DIR = Path("./output/")
+
+            # page states ---------------------------------------------------------------
+            if 'is_youtube_downloading' not in st.session_state:
+               st.session_state.is_youtube_downloading = False
+            if 'audio_files' not in st.session_state:
+               st.session_state.audio_files = []
+            if 'output_files' not in st.session_state:
+               st.session_state.output_files = []
+            if 'spleeter_settings' not in st.session_state:
+               st.session_state.spleeter_settings = None
+            if 'selected_music_file' not in st.session_state:
+               st.session_state.selected_music_file = None
+            if 'selected_music_files' not in st.session_state:
+               st.session_state.selected_music_files = None
+            # states updater -------------------------------------------------------------
+
+
+            def add_audio_files(audio_file: Path):
+               if(audio_file not in st.session_state.audio_files):
+                  st.session_state.audio_files.append(audio_file)
+
+
+            def save_uploaded_file(upload_file) -> Path:
+               os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+               escaped_file_path = Path(upload_file.name)
+
+               # check if upload_file name last charactor is not space charactor
+               if(escaped_file_path.stem[-1] == " "):
+                  escaped_file_path = escaped_file_path.parent / \
+                        f"{escaped_file_path.stem[:-1]}{escaped_file_path.suffix}"
+
+               file_path = UPLOAD_DIR / escaped_file_path
+               print(f"upload file:{file_path}")
+               with open(file_path, 'wb') as f:
+                  f.write(upload_file.read())
+
+               return file_path
+
+            # main page -------------------------------------------------------------------
+
+
+            st.title("Stem Player")
+
+            # audio file uploader
+            upload_files = st.file_uploader("Upload audio from local file", type=[
+               "wav", "mp3"], accept_multiple_files=True)
+
+            for audio_file in upload_files:
+               upload_path = save_uploaded_file(audio_file)
+               add_audio_files(upload_path)
+
+            current_mode = ProcessingMode.SINGLE
+            selected_music: Path
+            select_stems: SpleeterMode
+            select_codec: Codec
+            select_bitrate: int
+            output_files_generator: Generator[Path, None, None]
+
+            # single file mode ------------------------------------------------------------
+            if(current_mode == ProcessingMode.SINGLE):
+               with st.form("single_mode"):
+                  st.subheader("Mode: "+current_mode.value)
+                  selected_music = st.selectbox(
+                        "Select an audio file", st.session_state.audio_files, help="To select audio, 
+                        you have to upload or download an audio file at least once",
+                        format_func=lambda x: x.name)
+
+                  # select_stems = st.selectbox("Selected split mode", SpleeterMode, format_func=lambda x: x.value.label)
+                  select_stems = SpleeterMode.FIVESTEMS
+
+                  select_codec = Codec.MP3
+                  select_bitrate = 192
+                  duaration_minutes = 60
+                  use_16kHz = True
+                  use_mwf = True
+
+                  if st.form_submit_button("Split"):
+                        # check if settings are selected:
+                        if(selected_music == None or select_stems == None):
+                           st.error("Please select an audio file.")
+
+                        else:
+                           current_settings = SpleeterSettings(
+                              select_stems,
+                              select_codec,
+                              select_bitrate,
+                              use_mwf,
+                              use_16kHz,
+                              duaration_minutes*60
+                           )
+                           st.session_state.spleeter_settings = current_settings
+                           st.session_state.selected_music_file = selected_music
+                           st.session_state.output_files = []
+                           with st.spinner('Wait for spleeter processing...'):
+                              output_files_generator, is_exist = get_split_audio(
+                                    st.session_state.spleeter_settings,
+                                    selected_music,
+                                    OUTPUT_DIR)
+                              for x in output_files_generator:
+                                    st.session_state.output_files.append(x)
+                           st.success("Done!")
+
+               with st.container():
+                  st.subheader("Output")
+                  if(st.session_state.selected_music_file != None and select_stems != None):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                           st.caption("Audio:")
+                           st.write(st.session_state.selected_music_file.name)
+                        # with col2:
+                        #    st.caption("Mode:")
+                        #    st.write(
+                        #        f"{select_stems.value.name}{'-16kHz' if use_16kHz else '-11kHz'}{'-mwf' if use_mwf else '-no-mwf'}")
+                        with col2:
+                           st.caption("Zip:")
+                           zip_file_path = get_audio_separated_zip(
+                              audio_file=st.session_state.selected_music_file,
+                              output_path=OUTPUT_DIR,
+                              config=st.session_state.spleeter_settings,
+                           )
+                           with open(zip_file_path, 'rb') as f:
+                              st.download_button(
+                                    label="Download",
+                                    data=f,
+                                    file_name=zip_file_path.name,
+                              )
+                        st.caption("Original audio: " +
+                                 st.session_state.selected_music_file.name)
+                        st.audio(str(selected_music))
+
+                        for i, audio_file in enumerate(st.session_state.output_files):
+                           st.caption(audio_file.name)
+                           wav, sr = librosa.load(audio_file)
+                           fig, ax = plt.subplots()
+                           librosa.display.waveplot(wav, sr=sr, x_axis="time", ax=ax)
+                           st.audio(str(audio_file))
+                           st.pyplot(fig)
+
+         </code></pre>
+
+     </div>
+      </div>
+    <div class="element">
+        <h7>紹介ビデオ</h7>
+        <div class="video"><iframe width="900" height="500"src="https://www.youtube.com/embed/Fs3oLisVtwI" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+        </iframe></div>
+    </div>
+    <div class="references">
+        <p>参考文献</p>
+        <ul>
+            <li>
+                <a href="https://higedan-stemplayer.jp/">Stem Player — Offical 髭男 dism 特設サイト (2022 年 10 月 6 日閲覧)</a>
+            </li>
+        </ul>
+    </div>
+
+<footer>
+    ©ウルフジャスティン智也、奥田真輝、瀬川日向、川原瑞樹
+</footer>
+
+</body></html>
+
